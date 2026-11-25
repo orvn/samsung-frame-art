@@ -1,13 +1,8 @@
 ![Conventional Commits](https://img.shields.io/badge/Conventional_Commits-FE5196?style=flat&logo=conventionalcommits&logoColor=white)
 
-# agnostic-template
+# Samsung Frame Art
 
-A language-agnostic template repo
-
-### Setup
-
-Run `./scripts/setup.sh` once after cloning
-
+Samsung frame art
 
 ### Commit messages
 
