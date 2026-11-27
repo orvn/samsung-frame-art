@@ -77,8 +77,19 @@ class Work:
         return display_name(self.artist, self.year, self.title)
 
 
+_TRANSLIT = str.maketrans({"ß": "ss", "æ": "ae", "Æ": "AE", "œ": "oe", "Œ": "OE", "ø": "o", "Ø": "O",
+                           "ł": "l", "Ł": "L", "đ": "d", "Đ": "D", "þ": "th", "Þ": "Th", "–": "-", "—": "-",
+                           "‘": "'", "’": "'", "“": "", "”": "", "…": "..."})
+
+
+def ascii_text(s: str) -> str:
+    """Plain ASCII: 'Paul Cézanne (1903) - Château Noir' -> 'Paul Cezanne (1903) - Chateau Noir'."""
+    s = unicodedata.normalize("NFKD", s.translate(_TRANSLIT))
+    return s.encode("ascii", "ignore").decode()
+
+
 def display_name(artist: str, year: int | str, title: str) -> str:
-    """'Artist (year) - Title', made safe for macOS/Windows filenames."""
+    """'Artist (year) - Title', plain ASCII and safe for macOS/Windows filenames."""
     parts = [artist.strip()] if artist.strip() else []
     if year:
         parts.append(f"({year})")
@@ -86,7 +97,7 @@ def display_name(artist: str, year: int | str, title: str) -> str:
     stem = f"{stem} - {title.strip()}" if stem else title.strip()
     stem = re.sub(r"\s*:\s*", " - ", stem)          # "States of Mind III: Those Who Stay"
     stem = re.sub(r'[/\\?%*|"<>]', "-", stem)
-    return unicodedata.normalize("NFC", re.sub(r"\s+", " ", stem)).strip(" .")
+    return re.sub(r"\s+", " ", ascii_text(stem)).strip(" .")
 
 
 def load_artlist(path: Path) -> tuple[list[Work], list[dict]]:
@@ -723,7 +734,10 @@ def cma_candidates(work: Work) -> list[dict]:
 
 def wikiart_candidates(work: Work) -> list[dict]:
     out = []
-    for q in _queries(work):
+    # title + surname first: a title alone ("The Flame") can bury the right painting under others
+    for q in dict.fromkeys([f"{work.title} {work.surname}".strip()] + _queries(work)):
+        if len(out) >= PER_SOURCE:
+            break
         j = get_json(WIKIART_API + "/PaintingSearch", dict(term=q))
         for d in j.get("data") or []:
             if len(out) >= PER_SOURCE or not d.get("image"):
@@ -768,6 +782,8 @@ def other_candidates(work: Work, ref_ar: float | None, used: set[str]) -> list[d
             log(f"{work.name}: {name} lookup failed: {e}")
     keep = []
     for c in found:
+        if work.exclude and re.search(work.exclude, f"{c['label']} {c['url']}", re.I):
+            continue  # a look-alike named in artlist.json, e.g. Van Gogh's 1889 "Evening Landscape with Rising Moon"
         if ref_ar and c["ar"] and abs(math.log(c["ar"] / ref_ar)) > 0.05:
             continue  # different proportions from the verified Commons image: another version
         if (not c["w"] or not c["h"]) and not measure(c):
@@ -865,11 +881,12 @@ IMAGE_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 
 
 def find_existing(out: Path, name: str) -> Path | None:
-    """A picture already in art/ under this name (any image extension), e.g. one you edited."""
-    want = unicodedata.normalize("NFC", name).casefold()
+    """A picture already in art/ under this name (any image extension), e.g. one you edited.
+    Accents are ignored, so an older 'Paul Cézanne …' file still counts as 'Paul Cezanne …'."""
+    want = ascii_text(name).casefold()
     if out.is_dir():
         for p in out.iterdir():
-            if p.suffix.lower() in IMAGE_EXT and unicodedata.normalize("NFC", p.stem).casefold() == want:
+            if p.suffix.lower() in IMAGE_EXT and ascii_text(p.stem).casefold() == want:
                 return p
     return None
 

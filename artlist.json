@@ -237,10 +237,17 @@
       "title": "The Juggler",
       "queries": ["The Magician", "El Juglar"]
     },
-    {"artist": "Jackson Pollock", "year": 1938, "title": "The Flame"}
+    {"artist": "Jackson Pollock", "year": 1938, "title": "The Flame"},
+    {
+      "artist": "Albert Bloch",
+      "year": 1911,
+      "title": "Harlequinade",
+      "url": "https://uploads1.wikiart.org/images/albert-bloch/harlequinade-1911.jpg",
+      "note": "Only ~800px online (WikiArt); MoMA holds it, so swap url if you find a bigger copy"
+    }
   ],
   "manual": [
     {"artist": "Leonora Carrington", "year": 1953, "title": "And Then We Saw the Daughter of the Minotaur"},
-    {"artist": "Boch", "year": 1911, "title": "Harlequinade", "_note": "artist unclear"}
+    {"artist": "Leonora Carrington", "year": 1942, "title": "Green Tea"}
   ]
 }
