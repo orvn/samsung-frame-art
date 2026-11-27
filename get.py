@@ -4,10 +4,10 @@
 # dependencies = ["requests", "pillow", "numpy"]
 # ///
 """
-Samsung Frame art prep: fetches the paintings in artlist.json from Wikimedia Commons
-and writes 3840x2160 crops to art/. See readme.md.
+Samsung Frame art prep: gets artlist.json paintings from sources like
+Wikimedia Commons and writes and crops (3840x2160) to ./art
 
-    uv run get.py [--only Vermeer] [--keep] [--matte] [--list artlist.json] [--out art]
+    uv run get.py [--only Vermeer] [-r] [--matte] [--list artlist.json] [--out art]
 """
 from __future__ import annotations
 
@@ -938,9 +938,9 @@ def main() -> None:
     ap.add_argument("--list", default=str(DEFAULT_LIST), help="artwork list (default: artlist.json)")
     ap.add_argument("--out", default=str(HERE / "art"), help="where the finished pictures go (default: art/)")
     ap.add_argument("--only", default="", help="comma-separated, case-insensitive parts of filenames, e.g. Vermeer")
-    ap.add_argument("--keep", action="store_true",
-                    help="leave works already in art/ as they are (default: replace them)")
-    ap.add_argument("--matte", action="store_true",
+    ap.add_argument("-r", "--replace", action="store_true",
+                    help="re-fetch and overwrite works already in art/ (default: skip them)")
+    ap.add_argument("--matte", action="store_true",  # off by default: edge-to-edge only
                     help="for portrait works, also write a version showing the whole painting on a mat")
     args = ap.parse_args()
 
@@ -965,12 +965,12 @@ def main() -> None:
         sys.exit(f"Nothing in {Path(args.list).name} matches: {', '.join(sorted(only))}")
     for i, w in enumerate(todo, 1):
         print(f"[{i}/{len(todo)}] {w.name} …", flush=True)
-        existing = find_existing(out, w.name) if args.keep else None
+        existing = None if args.replace else find_existing(out, w.name)
         if existing:
             old = previous.get(w.name, {})
             if old.get("source"):
                 used.add(old["source"])
-            print(f"      = already in {out.name}/, kept")
+            print(f"      = already in {out.name}/, skipped (-r to replace)")
             recs.append(dict(old, name=w.name, files=[existing.name], flags=["kept: already in art/"],
                              candidates=[]))
             continue
