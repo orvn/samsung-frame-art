@@ -4,12 +4,19 @@
 # dependencies = ["requests", "pillow", "numpy"]
 # ///
 """
-Samsung Frame art prep.
+Samsung Frame art prep: finds each painting listed in artlist.json on Wikimedia
+Commons, picks the most detailed, warmest reproduction, and writes 3840x2160 crops
+to art/ as "Artist (year) - Title.jpg". Downloads, the log and the review page go in temp/.
 
 Usage (macOS, with uv installed: `brew install uv`):
-    uv run frame_art.py # all
-    or: uv run frame_art.py --only vermeer-geographer,turner-golden-bough
-    or: pip3 install requests pillow numpy && python3 frame_art.py
+    uv run get.py                                     # everything in artlist.json
+    uv run get.py --only Vermeer                       # any part of the filename
+    uv run get.py --only "Geographer,Golden Bough"
+    uv run get.py --list other-list.json
+    or: pip3 install requests pillow numpy && python3 get.py
+
+The list of paintings, and any per-painting fixes (a specific Commons file, a local
+file, the crop position), live in artlist.json. This file is only the logic.
 """
 from __future__ import annotations
 
@@ -24,13 +31,16 @@ import re
 import sys
 import time
 import unicodedata
+import urllib.parse
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 import numpy as np
 import requests
-from PIL import Image, ImageCms, ImageFilter, ImageOps
+from PIL import Image, ImageCms, ImageFile, ImageFilter, ImageOps
 
 Image.MAX_IMAGE_PIXELS = None
+ImageFile.MAXBLOCK = 3 * 3840 * 2160  # room for an optimised 4:4:4 4K JPEG of a very busy image
 
 TARGET_W, TARGET_H = 3840, 2160
 TARGET_AR = TARGET_W / TARGET_H
@@ -47,86 +57,84 @@ UA = os.environ.get(
     "FrameArtPrep/1.0 (personal, non-commercial wall-art prep; python-requests)",
 )
 
-# ---------------------------------------------------------------------------
-# The list. slug, title, artist (surname used to verify the Wikidata match),
-# approximate year, extra search queries, note.
-# ---------------------------------------------------------------------------
-WORKS = [
-    ("rubens-four-studies-head", "Four Studies of a Head of a Moor", "Rubens", 1615,
-     ["Four studies of the head of a Moor"], ""),
-    ("seurat-concert-europeen", "At the Concert Européen", "Seurat", 1887,
-     ["Au Concert Européen Seurat"], "Conté crayon drawing (MoMA)"),
-    ("feininger-steamer-odin-ii", "Steamer Odin, II", "Feininger", 1927,
-     ["Dampfer Odin II Feininger"], "May not be on Commons; if missing, add it via ./manual"),
-    ("redon-apparition", "Apparition", "Redon", 1905, [], ""),
-    ("munch-vampire-ii", "Vampire II", "Munch", 1896, ["Vampyr II Munch"], "Print"),
-    ("bocklin-villa-by-the-sea", "Villa by the Sea", "Böcklin", 1878,
-     ["Villa am Meer Böcklin"], "Several versions exist; warmest/most detailed wins"),
-    ("vermeer-geographer", "The Geographer", "Vermeer", 1669, [], ""),
-    ("seurat-parade-de-cirque", "Circus Sideshow", "Seurat", 1888,
-     ["Parade de cirque Seurat"], ""),
-    ("stifter-viennese-suburbs", "View of Viennese Suburban Houses", "Stifter", 1839,
-     ["Blick auf Wiener Vorstadthäuser Stifter", "Stifter Wiener Vorstadthäuser"], ""),
-    ("turner-golden-bough", "The Golden Bough", "Turner", 1834, [], ""),
-    ("cezanne-large-bathers", "The Large Bathers", "Cézanne", 1906,
-     ["Les Grandes Baigneuses Cézanne"], "Three versions exist; warmest/most detailed wins"),
-    ("degas-ballet-rehearsal-on-stage", "Ballet Rehearsal on Stage", "Degas", 1874,
-     ["Répétition d'un ballet sur la scène Degas"], "Orsay version"),
-    ("degas-rehearsal-of-ballet-onstage", "The Rehearsal of the Ballet Onstage", "Degas", 1874,
-     ["Rehearsal of the Ballet Onstage Degas Metropolitan"], "Met version; can't reuse the file picked above"),
-    ("degas-dance-class", "The Dance Class", "Degas", 1874, ["La Classe de danse Degas"], ""),
-    ("manet-lady-with-fans", "Lady with Fans", "Manet", 1873, ["La Dame aux éventails Manet"],
-     "You wrote Degas, but 'Woman with Fans' (1873) is Manet's"),
-    ("degas-pagans-and-father", "Lorenzo Pagans and Auguste De Gas", "Degas", 1871,
-     ["Degas father listening to Lorenzo Pagans playing the guitar"], ""),
-    ("monet-tulip-fields-hague", "Tulip Fields near The Hague", "Monet", 1886,
-     ["Champs de tulipes Hollande Monet", "Monet tulip fields 1886"], ""),
-    ("monet-gare-saint-lazare", "The Gare Saint-Lazare", "Monet", 1877,
-     ["La Gare Saint-Lazare Monet 1877"], "Several versions exist"),
-    ("monet-bank-seine-bennecourt", "On the Bank of the Seine, Bennecourt", "Monet", 1868, [], ""),
-    ("vangogh-boulevard-de-clichy", "Boulevard de Clichy", "Gogh", 1887, [], ""),
-    ("vangogh-bank-of-the-seine", "Bank of the Seine", "Gogh", 1887, [], ""),
-    ("vangogh-evening-landscape", "Evening Landscape", "Gogh", 1885,
-     ["Avondlandschap Van Gogh 1885", "Van Gogh evening landscape 1885"], ""),
-    ("vangogh-undergrowth", "Undergrowth", "Gogh", 1887, [], ""),
-    ("kandinsky-swinging", "Swinging", "Kandinsky", 1925, [], ""),
-    ("kandinsky-ludwigskirche", "Munich-The Ludwigskirche", "Kandinsky", 1908,
-     ["Ludwigskirche in München Kandinsky"], ""),
-    ("cezanne-lestaque", "The Bay of Marseilles, Seen from L'Estaque", "Cézanne", 1885,
-     ["L'Estaque Cézanne"], "Several versions exist"),
-    ("cezanne-ginger-jar", "Still Life with Ginger Jar, Sugar Bowl, and Oranges", "Cézanne", 1902, [], ""),
-    ("cezanne-chateau-noir", "Château Noir", "Cézanne", 1903, [], ""),
-    ("vermeer-astronomer", "The Astronomer", "Vermeer", 1668, [], ""),
-    ("vermeer-love-letter", "The Love Letter", "Vermeer", 1670, [], ""),
-    ("turner-fishing-boats-hucksters", "Fishing Boats with Hucksters Bargaining for Fish", "Turner", 1837, [], ""),
-    ("turner-dogana", "The Dogano, San Giorgio, Citella, from the Steps of the Europa", "Turner", 1842,
-     ["Dogana San Giorgio Citella Europa Turner"], ""),
-    ("redon-deaths-head-1886", "Through the Crack a Death's-Head Was Projected", "Redon", 1886,
-     ["Redon death's head 1886"], ""),
-    ("munch-two-women-shore", "Two Women on the Shore", "Munch", 1898, ["To kvinner på stranden Munch"], "Woodcut"),
-    ("munch-the-storm", "The Storm", "Munch", 1893, [], ""),
-    ("bellows-dance-in-a-madhouse", "Dance in a Madhouse", "Bellows", 1917, [], "Lithograph"),
-    ("soutine-old-mill", "The Old Mill", "Soutine", 1922, [], ""),
-    ("boccioni-those-who-stay", "States of Mind III: Those Who Stay", "Boccioni", 1911,
-     ["Gli addii quelli che restano Boccioni", "Those Who Stay Boccioni"], ""),
-    ("redon-green-death", "The Green Death", "Redon", 1905, ["La Mort verte Redon"], ""),
-    ("salucci-seaport", "A Seaport with Figures", "Salucci", 1656,
-     ["Alessandro Salucci port capriccio"], ""),
-]
+DEFAULT_LIST = HERE / "artlist.json"
 
-# Public domain in Canada (artist died before 1972) but not on Commons, because
-# Commons only hosts works that are also public domain in the US. Drop a file in
-# ./manual/<slug>.<ext> and it is processed like the rest.
-MANUAL_ONLY = [
-    ("magritte-harvest", "Harvest (1943), Magritte"),
-    ("magritte-empire-of-light", "The Empire of Light (1950), Magritte"),
-    ("magritte-the-lovers", "The Lovers (1928), Magritte"),
-    ("magritte-false-mirror", "The False Mirror (1929), Magritte"),
-    ("magritte-golconda", "Golconda (1953), Magritte"),
-    ("varo-the-juggler", "The Juggler / The Magician (1956), Varo"),
-    ("pollock-the-flame", "The Flame (c. 1934–38), Pollock"),
-    ("harlequinade-1911", "Harlequinade (1911), 'Boch': artist unclear, so add it yourself"),
-]
+
+@dataclass
+class Work:
+    """One painting from artlist.json."""
+    title: str
+    artist: str = ""           # full name, as it should appear in the filename
+    year: int = 0              # approximate; used in the filename and to tell versions apart
+    match: str = ""            # name that must appear in sources; default: last word of artist
+    queries: list[str] = field(default_factory=list)
+    note: str = ""
+    exclude: str = ""          # regex of look-alike filenames to reject
+    file: str = ""             # force this Commons file
+    local: str = ""            # or use this file on disk
+    anchor: float | None = None  # crop position 0..1; None = automatic
+
+    @property
+    def surname(self) -> str:
+        """Used to check sources: the artist's surname unless "match" says otherwise."""
+        return self.match or (self.artist.split()[-1] if self.artist.strip() else "")
+
+    @property
+    def name(self) -> str:
+        """Output filename without extension, e.g. 'Johannes Vermeer (1669) - The Geographer'."""
+        return display_name(self.artist, self.year, self.title)
+
+
+def display_name(artist: str, year: int | str, title: str) -> str:
+    """'Artist (year) - Title', made safe for macOS/Windows filenames."""
+    parts = [artist.strip()] if artist.strip() else []
+    if year:
+        parts.append(f"({year})")
+    stem = " ".join(parts)
+    stem = f"{stem} - {title.strip()}" if stem else title.strip()
+    stem = re.sub(r"\s*:\s*", " - ", stem)          # "States of Mind III: Those Who Stay"
+    stem = re.sub(r'[/\\?%*|"<>]', "-", stem)
+    return unicodedata.normalize("NFC", re.sub(r"\s+", " ", stem)).strip(" .")
+
+
+def load_artlist(path: Path) -> tuple[list[Work], list[dict]]:
+    """Read and check artlist.json. Returns (works, manual entries). Keys starting with _ are ignored."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        sys.exit(f"Can't find {path}")
+    except json.JSONDecodeError as e:
+        sys.exit(f"{path.name} isn't valid JSON: {e.msg} (line {e.lineno}, column {e.colno})")
+    if not isinstance(data, dict) or not isinstance(data.get("works", []), list):
+        sys.exit(f'{path.name} should be an object with a "works" list')
+    known = {f.name for f in fields(Work)}
+    works, seen = [], set()
+    for i, raw in enumerate(data.get("works", []), 1):
+        where = f"{path.name}, work #{i} ({raw.get('title', 'no title') if isinstance(raw, dict) else '?'})"
+        if not isinstance(raw, dict):
+            sys.exit(f"{where}: each work should be an object")
+        raw = {k: v for k, v in raw.items() if not k.startswith("_")}
+        unknown = set(raw) - known
+        if unknown:
+            sys.exit(f"{where}: unknown key(s): {', '.join(sorted(unknown))}")
+        if not raw.get("title"):
+            sys.exit(f"{where}: needs a title")
+        if raw.get("exclude"):
+            try:
+                re.compile(raw["exclude"])
+            except re.error as e:
+                sys.exit(f"{where}: exclude isn't a valid regex: {e}")
+        if raw.get("anchor") is not None and not 0 <= float(raw["anchor"]) <= 1:
+            sys.exit(f"{where}: anchor must be between 0 and 1")
+        work = Work(**raw)
+        if work.name.casefold() in seen:
+            sys.exit(f"{where}: same artist, year and title as an earlier work")
+        seen.add(work.name.casefold())
+        works.append(work)
+    manual = [display_name(m.get("artist", ""), m.get("year", ""), m["title"])
+              for m in data.get("manual", []) if isinstance(m, dict) and m.get("title")]
+    return works, manual
+
 
 EXCLUDE_NAME = re.compile(
     r"detail|ausschnitt|d[ée]tail|\bframe[sd]?\b|framed|cadre|rahmen|x-?ray|golden mean|overlay|"
@@ -154,17 +162,11 @@ GENERIC_WORDS = {
     "par", "von", "van", "de", "des", "le", "la", "les", "der", "die", "das", "het", "and", "of",
     "jpg", "jpeg", "png", "tif", "tiff", "file", "by", "edit", "restored", "high", "resolution",
 }
-# Per-work filename patterns for look-alikes the general rules can't tell apart.
-NOT_THIS = {
-    "vangogh-evening-landscape": r"moonrise|rising moon|two peasants",
-    "cezanne-chateau-noir": r"millstone|maison maria|sainte.?victoire",
-    "monet-gare-saint-lazare": r"ext[ée]rieur|pont de l'europe",
-}
 OK_MIME = {"image/jpeg", "image/png", "image/tiff", "image/webp"}
 
 SESSION = requests.Session()
 SESSION.headers["User-Agent"] = UA
-CACHE = HERE / "cache"
+CACHE = HERE / "temp"
 API_CACHE_FILE = CACHE / "api.json"
 _api_cache: dict[str, object] = {}
 
@@ -172,10 +174,11 @@ _api_cache: dict[str, object] = {}
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
-LOG_FILE = HERE / "frame_art.log"
+LOG_FILE = CACHE / "get.log"
 
 
 def log(msg: str) -> None:
+    LOG_FILE.parent.mkdir(exist_ok=True)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
 
@@ -477,9 +480,9 @@ def make_matted(im: Image.Image) -> Image.Image:
 # ---------------------------------------------------------------------------
 # Per-work pipeline
 # ---------------------------------------------------------------------------
-def gather_candidates(work: tuple, used: set[str]) -> tuple[list[dict], dict]:
-    slug, title, artist, year, extra, note = work
-    queries = [f"{title} {artist}".strip()] + extra
+def gather_candidates(work: Work, used: set[str]) -> tuple[list[dict], dict]:
+    title, artist, year = work.title, work.surname, work.year
+    queries = [f"{title} {artist}".strip()] + work.queries
     meta: dict = {"wikidata": None, "confidence": "high"}
     wd = resolve_wikidata(title, artist, year, queries, extra_titles(work))
     titles: list[str] = []
@@ -512,10 +515,10 @@ def gather_candidates(work: tuple, used: set[str]) -> tuple[list[dict], dict]:
             continue
         if ii.get("size", 0) > MAX_ORIGINAL_BYTES:
             continue
-        if work[0] in NOT_THIS and re.search(NOT_THIS[work[0]], t, re.I):
+        if work.exclude and re.search(work.exclude, t, re.I):
             continue
         is_verified = t in verified
-        full_title, extra = title_match(t, title, artist)
+        full_title, extra = title_match(t, title, work.artist)
         if not is_verified:
             yrs = [int(y) for y in re.findall(r"(?<![\d.])(1[4-9]\d\d)(?![\d.])", t)]
             if yrs and year and min(abs(y - year) for y in yrs) > 5:
@@ -524,7 +527,7 @@ def gather_candidates(work: tuple, used: set[str]) -> tuple[list[dict], dict]:
                 continue
             # A plain search hit must name the artist and every word of the title.
             if (artist and norm(artist) not in norm(t)) or not (
-                    full_title or any(title_match(t, q, artist)[0] for q in extra_titles(work))):
+                    full_title or any(title_match(t, q, work.artist)[0] for q in extra_titles(work))):
                 continue
         cands.append(dict(title=t, w=w, h=h, bytes=ii.get("size", 0), mime=ii["mime"],
                           verified=is_verified, extra=extra,
@@ -546,12 +549,11 @@ def gather_candidates(work: tuple, used: set[str]) -> tuple[list[dict], dict]:
     return cands, meta
 
 
-def extra_titles(work: tuple) -> list[str]:
+def extra_titles(work: Work) -> list[str]:
     """Alternative titles from the extra queries, minus the artist's name."""
-    artist = work[2]
     out = []
-    for q in work[4]:
-        ws = words(q) - GENERIC_WORDS - words(artist) - {"painting", "lithograph", "woodcut"}
+    for q in work.queries:
+        ws = words(q) - GENERIC_WORDS - words(work.artist) - {"painting", "lithograph", "woodcut"}
         if ws:
             out.append(" ".join(sorted(ws)))
     return out
@@ -591,28 +593,28 @@ def fetch_full(c: dict) -> Path:
     return download(c["url"])
 
 
-def render(slug: str, im: Image.Image, out: Path, anchor: float | None, matte: bool) -> dict:
+def render(name: str, im: Image.Image, out: Path, anchor: float | None, matte: bool) -> dict:
     cropped, info = make_crop(im, anchor)
-    save_jpeg(cropped, out / f"{slug}.jpg")
-    info["files"] = [f"{slug}.jpg"]
+    save_jpeg(cropped, out / f"{name}.jpg")
+    info["files"] = [f"{name}.jpg"]
     if matte and info["kept"] < MATTE_IF_KEPT_BELOW:
-        save_jpeg(make_matted(im), out / f"{slug}__matted.jpg")
-        info["files"].append(f"{slug}__matted.jpg")
+        save_jpeg(make_matted(im), out / f"{name} (matted).jpg")
+        info["files"].append(f"{name} (matted).jpg")
     return info
 
 
-def process_work(work: tuple, out: Path, overrides: dict, used: set[str], matte: bool) -> dict:
-    slug, title, artist, year, extra, note = work
-    ov = overrides.get(slug, {})
-    rec: dict = dict(slug=slug, title=title, artist=artist, year=year, note=note, flags=[])
-    if "local" in ov:
-        im = load_image((HERE / ov["local"]).resolve())
-        rec.update(render(slug, im, out, ov.get("anchor"), matte), source=ov["local"], candidates=[])
+def process_work(work: Work, out: Path, used: set[str], matte: bool) -> dict:
+    name = work.name
+    rec: dict = dict(name=name, title=work.title, artist=work.artist, year=work.year,
+                     note=work.note, flags=[])
+    if work.local:
+        im = load_image((HERE / work.local).resolve())
+        rec.update(render(name, im, out, work.anchor, matte), source=work.local, candidates=[])
         return rec
-    if "file" in ov:
-        info = commons_info([ov["file"]])
+    if work.file:
+        info = commons_info([work.file])
         if not info:
-            rec["flags"].append(f"override file not found: {ov['file']}")
+            rec["flags"].append(f"file in artlist.json not found on Commons: {work.file}")
             return rec
         t, ii = next(iter(info.items()))
         cands = [dict(title=t, w=ii["width"], h=ii["height"], bytes=ii.get("size", 0), mime=ii["mime"],
@@ -625,7 +627,7 @@ def process_work(work: tuple, out: Path, overrides: dict, used: set[str], matte:
     if meta.get("wikidata"):
         rec["wikidata"] = meta["wikidata"]["qid"] + " · " + meta["wikidata"]["label"]
     if not cands:
-        rec["flags"].append("NOT FOUND on Commons; add a file in ./manual or an override")
+        rec["flags"].append("NOT FOUND on Commons; set file or local in artlist.json")
         return rec
     cands = score_all(cands)
     rec["candidates"] = cands
@@ -634,9 +636,9 @@ def process_work(work: tuple, out: Path, overrides: dict, used: set[str], matte:
             im = load_image(fetch_full(c))
         except Exception as e:
             c["error"] = f"load failed: {e}"
-            log(f"{slug}: skipping {c['title']}: {e}")
+            log(f"{name}: skipping {c['title']}: {e}")
             continue
-        rec.update(render(slug, im, out, ov.get("anchor"), matte))
+        rec.update(render(name, im, out, work.anchor, matte))
         rec["source"] = c["title"]
         rec["source_page"] = c["page"]
         used.add(c["title"])
@@ -648,9 +650,9 @@ def process_work(work: tuple, out: Path, overrides: dict, used: set[str], matte:
         rec["flags"].append(f"upscaled {rec['upscale']:.2f}x (best source too small)")
     if rec["kept"] < MATTE_IF_KEPT_BELOW:
         rec["flags"].append(f"crop keeps only {rec['kept']:.0%} of the picture; see the matted version")
-    if not meta.get("wikidata") and "file" not in ov:
+    if not meta.get("wikidata") and not work.file:
         rec["flags"].append("low-confidence match")
-    if note.startswith("UNSURE"):
+    if work.note.startswith("UNSURE"):
         rec["flags"].append("title uncertain")
     return rec
 
@@ -663,16 +665,16 @@ def process_manual(out: Path, matte: bool) -> list[dict]:
     for p in sorted(mdir.iterdir()):
         if p.suffix.lower() not in {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}:
             continue
-        slug = re.sub(r"[^a-z0-9]+", "-", norm(p.stem)).strip("-")
+        name = display_name("", "", p.stem)  # keep the scan's own name, just made filename-safe
         try:
             im = load_image(p)
-            rec = dict(slug=slug, title=p.name, artist="", year="", note="from ./manual",
+            rec = dict(name=name, title=p.name, artist="", year="", note="from ./manual",
                        flags=[], candidates=[], source=str(p.relative_to(HERE)))
-            rec.update(render(slug, im, out, None, matte))
+            rec.update(render(name, im, out, None, matte))
             if rec["upscale"] > 1.01:
                 rec["flags"].append(f"upscaled {rec['upscale']:.2f}x")
         except Exception as e:
-            rec = dict(slug=slug, title=p.name, flags=[f"failed: {e}"], candidates=[])
+            rec = dict(name=name, title=p.name, flags=[f"failed: {e}"], candidates=[])
         recs.append(rec)
     return recs
 
@@ -680,11 +682,14 @@ def process_manual(out: Path, matte: bool) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Review page
 # ---------------------------------------------------------------------------
-def write_review(recs: list[dict], out: Path) -> Path:
+def write_review(recs: list[dict], out: Path, manual_list: list[str]) -> Path:
     e = html.escape
+    CACHE.mkdir(exist_ok=True)
+    rel = Path(os.path.relpath(out, CACHE))  # review.html sits in temp/, the pictures in art/
+    href = lambda f: e(urllib.parse.quote((rel / f).as_posix()))
     rows = []
     for r in recs:
-        files = "".join(f'<a href="{e(f)}"><img class="out" src="{e(f)}"></a>' for f in r.get("files", []))
+        files = "".join(f'<a href="{href(f)}"><img class="out" src="{href(f)}"></a>' for f in r.get("files", []))
         flags = "".join(f'<span class="flag">{e(f)}</span>' for f in r.get("flags", []))
         cand_html = []
         for c in r.get("candidates", [])[:8]:
@@ -701,13 +706,13 @@ def write_review(recs: list[dict], out: Path) -> Path:
                     if r.get("source_page") else e(src))
         rows.append(f"""
 <section>
-  <h2>{e(r['slug'])} <small>{e(str(r.get('title', '')))} · {e(str(r.get('artist', '')))} {e(str(r.get('year', '')))}</small></h2>
+  <h2>{e(r['name'])}</h2>
   <div class="meta">{e(r.get('note', ''))} {flags}</div>
   <div class="meta">source: {src_html} {e(r.get('src', ''))} · kept {r.get('kept', 0):.0%} · {e(r.get('wikidata', ''))}</div>
   <div class="outs">{files}</div>
   <div class="cands">{''.join(cand_html)}</div>
 </section>""")
-    manual = "".join(f"<li><code>manual/{e(s)}.jpg</code> ({e(d)})</li>" for s, d in MANUAL_ONLY)
+    manual = "".join(f"<li><code>manual/{e(m)}.jpg</code></li>" for m in manual_list)
     page = f"""<!doctype html><meta charset="utf-8"><title>Frame art review</title>
 <style>
 body{{font:14px/1.4 -apple-system,system-ui,sans-serif;background:#1d1a16;color:#e9e2d4;margin:24px}}
@@ -722,51 +727,54 @@ section{{border-top:1px solid #3a342c;padding:18px 0}}
 code{{color:#e0b04a}}
 </style>
 <h1>Frame art review</h1>
-<p>Big images are the files to upload. Small thumbnails are the Commons versions that were considered, best score first; the outlined one was used.
-To use a different one, put its filename in <code>frame_art_overrides.json</code> and re-run with <code>--only &lt;slug&gt;</code>.</p>
+<p>Big images are the files to upload (they're in <code>{e(str(out))}</code>). Small thumbnails are the Commons versions that were considered, best score first; the outlined one was used.
+To use a different one, add <code>"file": "File:…"</code> to that work in <code>artlist.json</code> and re-run with <code>--only "part of its name"</code>.</p>
 <p>Public domain in Canada but not hosted on Commons. Drop your own scans here and re-run:</p><ul>{manual}</ul>
 {''.join(rows)}"""
-    path = out / "review.html"
+    path = CACHE / "review.html"
     path.write_text(page, encoding="utf-8")
     return path
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", default=str(HERE / "frame_3840x2160"))
-    ap.add_argument("--only", default="", help="comma-separated slugs")
+    ap.add_argument("--list", default=str(DEFAULT_LIST), help="artwork list (default: artlist.json)")
+    ap.add_argument("--out", default=str(HERE / "art"), help="where the finished pictures go (default: art/)")
+    ap.add_argument("--only", default="", help="comma-separated, case-insensitive parts of filenames, e.g. Vermeer")
     ap.add_argument("--no-matte", action="store_true", help="don't write the matted versions")
     args = ap.parse_args()
 
+    works, manual_list = load_artlist(Path(args.list))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     CACHE.mkdir(exist_ok=True)
     global _api_cache
     if API_CACHE_FILE.exists():
         _api_cache = json.loads(API_CACHE_FILE.read_text())
-    ov_path = HERE / "frame_art_overrides.json"
-    overrides = json.loads(ov_path.read_text()) if ov_path.exists() else {}
     only = {s.strip() for s in args.only.split(",") if s.strip()}
 
     recs, used = [], set()
-    todo = [w for w in WORKS if not only or w[0] in only]
+    todo = [w for w in works if not only or any(o.casefold() in w.name.casefold() for o in only)]
+    if only and not todo:
+        sys.exit(f"Nothing in {Path(args.list).name} matches: {', '.join(sorted(only))}")
     for i, w in enumerate(todo, 1):
-        print(f"[{i}/{len(todo)}] {w[0]} …", flush=True)
+        print(f"[{i}/{len(todo)}] {w.name} …", flush=True)
         try:
-            r = process_work(w, out, overrides, used, not args.no_matte)
+            r = process_work(w, out, used, not args.no_matte)
         except Exception as e:
-            r = dict(slug=w[0], title=w[1], artist=w[2], year=w[3], note=w[5], flags=[f"error: {e}"])
+            r = dict(name=w.name, title=w.title, artist=w.artist, year=w.year, note=w.note,
+                     flags=[f"error: {e}"])
         for f in r.get("flags", []):
             print(f"      ! {f}")
         if r.get("source"):
             print(f"      ✓ {r['source']}  ({r.get('src')}, kept {r.get('kept', 0):.0%})")
         recs.append(r)
         API_CACHE_FILE.write_text(json.dumps(_api_cache))
-        write_review(recs, out)  # so a long or interrupted run can be checked as it goes
+        write_review(recs, out, manual_list)  # so a long or interrupted run can be checked as it goes
     if not only:
         recs += process_manual(out, not args.no_matte)
-    review = write_review(recs, out)
-    (out / "report.json").write_text(json.dumps(
+    review = write_review(recs, out, manual_list)
+    (CACHE / "report.json").write_text(json.dumps(
         [{k: v for k, v in r.items() if k != "candidates"} for r in recs], indent=1, default=str))
     done = sum(1 for r in recs if r.get("files"))
     print(f"\n{done}/{len(recs)} done → {out}\nReview: open '{review}'")

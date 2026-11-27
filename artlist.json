@@ -1,0 +1,214 @@
+{
+  "_help": {
+    "about": "Samsung Frame art list, read by get.py. Keys starting with _ are ignored, so _note etc. can hold your own comments.",
+    "works": "Paintings to fetch from Wikimedia Commons. Output: art/<Artist> (<year>) - <Title>.jpg",
+    "manual": "Works Commons doesn't host (e.g. public domain in Canada but not the US). Put your scan in manual/ named like the output, e.g. manual/René Magritte (1950) - The Empire of Light.jpg",
+    "fields": {
+      "artist": "full name, as it should appear in the filename",
+      "year": "used in the filename and to tell versions of a work apart",
+      "title": "used in the filename and to find the work (required)",
+      "queries": "extra search terms: alternate or original-language titles",
+      "note": "shown on the review page",
+      "exclude": "optional regex; source filenames matching it are look-alikes, never this work",
+      "match": "optional: name a source must contain, if not the artist's last word (e.g. Rembrandt)",
+      "file": "optional: use this exact Commons file (\"File:...\") instead of searching",
+      "local": "optional: use a file on disk instead (path relative to this folder)",
+      "anchor": "optional crop position: 0 = left/top, 0.5 = centre, 1 = right/bottom (default: automatic)"
+    }
+  },
+  "works": [
+    {
+      "artist": "Peter Paul Rubens",
+      "year": 1615,
+      "title": "Four Studies of a Head of a Moor",
+      "queries": ["Four studies of the head of a Moor"]
+    },
+    {
+      "artist": "Georges Seurat",
+      "year": 1887,
+      "title": "At the Concert Européen",
+      "queries": ["Au Concert Européen Seurat"],
+      "note": "Conté crayon drawing (MoMA)"
+    },
+    {
+      "artist": "Lyonel Feininger",
+      "year": 1927,
+      "title": "Steamer Odin, II",
+      "queries": ["Dampfer Odin II Feininger"],
+      "note": "May not be on Commons; if missing, put a scan in manual/"
+    },
+    {"artist": "Odilon Redon", "year": 1905, "title": "Apparition"},
+    {
+      "artist": "Edvard Munch",
+      "year": 1896,
+      "title": "Vampire II",
+      "queries": ["Vampyr II Munch"],
+      "note": "Print"
+    },
+    {
+      "artist": "Arnold Böcklin",
+      "year": 1878,
+      "title": "Villa by the Sea",
+      "queries": ["Villa am Meer Böcklin"],
+      "note": "Several versions exist; warmest/most detailed wins"
+    },
+    {"artist": "Johannes Vermeer", "year": 1669, "title": "The Geographer"},
+    {
+      "artist": "Georges Seurat",
+      "year": 1888,
+      "title": "Circus Sideshow",
+      "queries": ["Parade de cirque Seurat"]
+    },
+    {
+      "artist": "Adalbert Stifter",
+      "year": 1839,
+      "title": "View of Viennese Suburban Houses",
+      "queries": ["Blick auf Wiener Vorstadthäuser Stifter", "Stifter Wiener Vorstadthäuser"]
+    },
+    {"artist": "J. M. W. Turner", "year": 1834, "title": "The Golden Bough"},
+    {
+      "artist": "Paul Cézanne",
+      "year": 1906,
+      "title": "The Large Bathers",
+      "queries": ["Les Grandes Baigneuses Cézanne"],
+      "note": "Three versions exist; warmest/most detailed wins"
+    },
+    {
+      "artist": "Edgar Degas",
+      "year": 1874,
+      "title": "Ballet Rehearsal on Stage",
+      "queries": ["Répétition d'un ballet sur la scène Degas"],
+      "note": "Orsay version"
+    },
+    {
+      "artist": "Edgar Degas",
+      "year": 1874,
+      "title": "The Rehearsal of the Ballet Onstage",
+      "queries": ["Rehearsal of the Ballet Onstage Degas Metropolitan"],
+      "note": "Met version; can't reuse the file picked above"
+    },
+    {
+      "artist": "Edgar Degas",
+      "year": 1874,
+      "title": "The Dance Class",
+      "queries": ["La Classe de danse Degas"]
+    },
+    {
+      "artist": "Édouard Manet",
+      "year": 1873,
+      "title": "Lady with Fans",
+      "queries": ["La Dame aux éventails Manet"],
+      "note": "You wrote Degas, but 'Woman with Fans' (1873) is Manet's"
+    },
+    {
+      "artist": "Edgar Degas",
+      "year": 1871,
+      "title": "Lorenzo Pagans and Auguste De Gas",
+      "queries": ["Degas father listening to Lorenzo Pagans playing the guitar"]
+    },
+    {
+      "artist": "Claude Monet",
+      "year": 1886,
+      "title": "Tulip Fields near The Hague",
+      "queries": ["Champs de tulipes Hollande Monet", "Monet tulip fields 1886"]
+    },
+    {
+      "artist": "Claude Monet",
+      "year": 1877,
+      "title": "The Gare Saint-Lazare",
+      "queries": ["La Gare Saint-Lazare Monet 1877"],
+      "note": "Several versions exist",
+      "exclude": "ext[ée]rieur|pont de l'europe"
+    },
+    {"artist": "Claude Monet", "year": 1868, "title": "On the Bank of the Seine, Bennecourt"},
+    {"artist": "Vincent van Gogh", "year": 1887, "title": "Boulevard de Clichy"},
+    {"artist": "Vincent van Gogh", "year": 1887, "title": "Bank of the Seine"},
+    {
+      "artist": "Vincent van Gogh",
+      "year": 1885,
+      "title": "Evening Landscape",
+      "queries": ["Avondlandschap Van Gogh 1885", "Van Gogh evening landscape 1885"],
+      "exclude": "moonrise|rising moon|two peasants"
+    },
+    {"artist": "Vincent van Gogh", "year": 1887, "title": "Undergrowth"},
+    {"artist": "Wassily Kandinsky", "year": 1925, "title": "Swinging"},
+    {
+      "artist": "Wassily Kandinsky",
+      "year": 1908,
+      "title": "The Ludwigskirche in Munich",
+      "queries": ["Ludwigskirche in München Kandinsky"]
+    },
+    {
+      "artist": "Paul Cézanne",
+      "year": 1885,
+      "title": "The Bay of Marseilles, Seen from L'Estaque",
+      "queries": ["L'Estaque Cézanne"],
+      "note": "Several versions exist"
+    },
+    {"artist": "Paul Cézanne", "year": 1902, "title": "Still Life with Ginger Jar, Sugar Bowl, and Oranges"},
+    {
+      "artist": "Paul Cézanne",
+      "year": 1903,
+      "title": "Château Noir",
+      "exclude": "millstone|maison maria|sainte.?victoire"
+    },
+    {"artist": "Johannes Vermeer", "year": 1668, "title": "The Astronomer"},
+    {"artist": "Johannes Vermeer", "year": 1670, "title": "The Love Letter"},
+    {"artist": "J. M. W. Turner", "year": 1837, "title": "Fishing Boats with Hucksters Bargaining for Fish"},
+    {
+      "artist": "J. M. W. Turner",
+      "year": 1842,
+      "title": "The Dogano, San Giorgio, Citella, from the Steps of the Europa",
+      "queries": ["Dogana San Giorgio Citella Europa Turner"]
+    },
+    {
+      "artist": "Odilon Redon",
+      "year": 1886,
+      "title": "Through the Crack a Death's-Head Was Projected",
+      "queries": ["Redon death's head 1886"]
+    },
+    {
+      "artist": "Edvard Munch",
+      "year": 1898,
+      "title": "Two Women on the Shore",
+      "queries": ["To kvinner på stranden Munch"],
+      "note": "Woodcut"
+    },
+    {"artist": "Edvard Munch", "year": 1893, "title": "The Storm"},
+    {
+      "artist": "George Bellows",
+      "year": 1917,
+      "title": "Dance in a Madhouse",
+      "note": "Lithograph"
+    },
+    {"artist": "Chaim Soutine", "year": 1922, "title": "The Old Mill"},
+    {
+      "artist": "Umberto Boccioni",
+      "year": 1911,
+      "title": "States of Mind III: Those Who Stay",
+      "queries": ["Gli addii quelli che restano Boccioni", "Those Who Stay Boccioni"]
+    },
+    {
+      "artist": "Odilon Redon",
+      "year": 1905,
+      "title": "The Green Death",
+      "queries": ["La Mort verte Redon"]
+    },
+    {
+      "artist": "Alessandro Salucci",
+      "year": 1656,
+      "title": "A Seaport with Figures",
+      "queries": ["Alessandro Salucci port capriccio"]
+    }
+  ],
+  "manual": [
+    {"artist": "René Magritte", "year": 1943, "title": "Harvest"},
+    {"artist": "René Magritte", "year": 1950, "title": "The Empire of Light"},
+    {"artist": "René Magritte", "year": 1928, "title": "The Lovers"},
+    {"artist": "René Magritte", "year": 1929, "title": "The False Mirror"},
+    {"artist": "René Magritte", "year": 1953, "title": "Golconda"},
+    {"artist": "Remedios Varo", "year": 1956, "title": "The Juggler"},
+    {"artist": "Jackson Pollock", "year": 1938, "title": "The Flame"},
+    {"artist": "Boch", "year": 1911, "title": "Harlequinade", "_note": "artist unclear"}
+  ]
+}
