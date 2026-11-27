@@ -7,7 +7,7 @@
 Samsung Frame art prep: fetches the paintings in artlist.json from Wikimedia Commons
 and writes 3840x2160 crops to art/. See readme.md.
 
-    uv run get.py [--only Vermeer] [--no-matte] [--list artlist.json] [--out art]
+    uv run get.py [--only Vermeer] [--keep] [--matte] [--list artlist.json] [--out art]
 """
 from __future__ import annotations
 
@@ -640,7 +640,8 @@ def process_work(work: Work, out: Path, used: set[str], matte: bool) -> dict:
     if rec["upscale"] > 1.01:
         rec["flags"].append(f"upscaled {rec['upscale']:.2f}x (best source too small)")
     if rec["kept"] < MATTE_IF_KEPT_BELOW:
-        rec["flags"].append(f"crop keeps only {rec['kept']:.0%} of the picture; see the matted version")
+        rec["flags"].append(f"crop keeps only {rec['kept']:.0%} of the picture"
+                            + ("; see the matted version" if matte else "; --matte makes a version showing all of it"))
     if not meta.get("wikidata") and not work.file:
         rec["flags"].append("low-confidence match")
     if work.note.startswith("UNSURE"):
@@ -648,26 +649,17 @@ def process_work(work: Work, out: Path, used: set[str], matte: bool) -> dict:
     return rec
 
 
-def process_manual(out: Path, matte: bool) -> list[dict]:
-    recs = []
-    mdir = HERE / "manual"
-    if not mdir.is_dir():
-        return recs
-    for p in sorted(mdir.iterdir()):
-        if p.suffix.lower() not in {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}:
-            continue
-        name = display_name("", "", p.stem)  # keep the scan's own name, just made filename-safe
-        try:
-            im = load_image(p)
-            rec = dict(name=name, title=p.name, artist="", year="", note="from ./manual",
-                       flags=[], candidates=[], source=str(p.relative_to(HERE)))
-            rec.update(render(name, im, out, None, matte))
-            if rec["upscale"] > 1.01:
-                rec["flags"].append(f"upscaled {rec['upscale']:.2f}x")
-        except Exception as e:
-            rec = dict(name=name, title=p.name, flags=[f"failed: {e}"], candidates=[])
-        recs.append(rec)
-    return recs
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+
+
+def find_existing(out: Path, name: str) -> Path | None:
+    """A picture already in art/ under this name (any image extension), e.g. one you edited."""
+    want = unicodedata.normalize("NFC", name).casefold()
+    if out.is_dir():
+        for p in out.iterdir():
+            if p.suffix.lower() in IMAGE_EXT and unicodedata.normalize("NFC", p.stem).casefold() == want:
+                return p
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -703,7 +695,8 @@ def write_review(recs: list[dict], out: Path, manual_list: list[str]) -> Path:
   <div class="outs">{files}</div>
   <div class="cands">{''.join(cand_html)}</div>
 </section>""")
-    manual = "".join(f"<li><code>manual/{e(m)}.jpg</code></li>" for m in manual_list)
+    manual = "".join(
+        f"<li>{'✓' if find_existing(out, m) else '✗ missing:'} <code>{e(m)}.jpg</code></li>" for m in manual_list)
     page = f"""<!doctype html><meta charset="utf-8"><title>Frame art review</title>
 <style>
 body{{font:14px/1.4 -apple-system,system-ui,sans-serif;background:#1d1a16;color:#e9e2d4;margin:24px}}
@@ -720,7 +713,7 @@ code{{color:#e0b04a}}
 <h1>Frame art review</h1>
 <p>Big images are the files to upload (they're in <code>{e(str(out))}</code>). Small thumbnails are the Commons versions that were considered, best score first; the outlined one was used.
 To use a different one, add <code>"file": "File:…"</code> to that work in <code>artlist.json</code> and re-run with <code>--only "part of its name"</code>.</p>
-<p>Public domain in Canada but not hosted on Commons. Drop your own scans here and re-run:</p><ul>{manual}</ul>
+<p>Works you add to <code>art/</code> yourself (from the manual list in artlist.json):</p><ul>{manual}</ul>
 {''.join(rows)}"""
     path = CACHE / "review.html"
     path.write_text(page, encoding="utf-8")
@@ -732,7 +725,10 @@ def main() -> None:
     ap.add_argument("--list", default=str(DEFAULT_LIST), help="artwork list (default: artlist.json)")
     ap.add_argument("--out", default=str(HERE / "art"), help="where the finished pictures go (default: art/)")
     ap.add_argument("--only", default="", help="comma-separated, case-insensitive parts of filenames, e.g. Vermeer")
-    ap.add_argument("--no-matte", action="store_true", help="don't write the matted versions")
+    ap.add_argument("--keep", action="store_true",
+                    help="leave works already in art/ as they are (default: replace them)")
+    ap.add_argument("--matte", action="store_true",
+                    help="for portrait works, also write a version showing the whole painting on a mat")
     args = ap.parse_args()
 
     works, manual_list = load_artlist(Path(args.list))
@@ -745,13 +741,28 @@ def main() -> None:
     only = {s.strip() for s in args.only.split(",") if s.strip()}
 
     recs, used = [], set()
+    previous = {}  # sources picked last time, so kept works still can't be reused by another work
+    if (CACHE / "report.json").exists():
+        try:
+            previous = {r["name"]: r for r in json.loads((CACHE / "report.json").read_text()) if r.get("name")}
+        except (ValueError, TypeError):
+            previous = {}
     todo = [w for w in works if not only or any(o.casefold() in w.name.casefold() for o in only)]
     if only and not todo:
         sys.exit(f"Nothing in {Path(args.list).name} matches: {', '.join(sorted(only))}")
     for i, w in enumerate(todo, 1):
         print(f"[{i}/{len(todo)}] {w.name} …", flush=True)
+        existing = find_existing(out, w.name) if args.keep else None
+        if existing:
+            old = previous.get(w.name, {})
+            if old.get("source"):
+                used.add(old["source"])
+            print(f"      = already in {out.name}/, kept")
+            recs.append(dict(old, name=w.name, files=[existing.name], flags=["kept: already in art/"],
+                             candidates=[]))
+            continue
         try:
-            r = process_work(w, out, used, not args.no_matte)
+            r = process_work(w, out, used, args.matte)
         except Exception as e:
             r = dict(name=w.name, title=w.title, artist=w.artist, year=w.year, note=w.note,
                      flags=[f"error: {e}"])
@@ -762,8 +773,6 @@ def main() -> None:
         recs.append(r)
         API_CACHE_FILE.write_text(json.dumps(_api_cache))
         write_review(recs, out, manual_list)  # so a long or interrupted run can be checked as it goes
-    if not only:
-        recs += process_manual(out, not args.no_matte)
     review = write_review(recs, out, manual_list)
     (CACHE / "report.json").write_text(json.dumps(
         [{k: v for k, v in r.items() if k != "candidates"} for r in recs], indent=1, default=str))

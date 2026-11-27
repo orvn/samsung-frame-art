@@ -2,7 +2,7 @@
   "_help": {
     "about": "Samsung Frame art list, read by get.py. Keys starting with _ are ignored, so _note etc. can hold your own comments.",
     "works": "Paintings to fetch from Wikimedia Commons. Output: art/<Artist> (<year>) - <Title>.jpg",
-    "manual": "Works Commons doesn't host (e.g. public domain in Canada but not the US). Put your scan in manual/ named like the output, e.g. manual/René Magritte (1950) - The Empire of Light.jpg",
+    "manual": "Works Commons doesn't host. Add them to art/ yourself, named like the others, e.g. art/René Magritte (1950) - The Empire of Light.jpg; the review page shows which are there.",
     "fields": {
       "artist": "full name, as it should appear in the filename",
       "year": "used in the filename and to tell versions of a work apart",
@@ -35,7 +35,7 @@
       "year": 1927,
       "title": "Steamer Odin, II",
       "queries": ["Dampfer Odin II Feininger"],
-      "note": "May not be on Commons; if missing, put a scan in manual/"
+      "note": "May not be on Commons; if missing, add it to art/ yourself"
     },
     {"artist": "Odilon Redon", "year": 1905, "title": "Apparition"},
     {
@@ -202,6 +202,7 @@
     }
   ],
   "manual": [
+    {"artist": "Leonora Carrington", "year": 1953, "title": "And Then We Saw the Daughter of the Minotaur"},
     {"artist": "René Magritte", "year": 1943, "title": "Harvest"},
     {"artist": "René Magritte", "year": 1950, "title": "The Empire of Light"},
     {"artist": "René Magritte", "year": 1928, "title": "The Lovers"},

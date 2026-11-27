@@ -16,18 +16,19 @@ Requires Python ≥ 3.10
 ```sh
 uv run get.py # get all of artlist.json
 uv run get.py --only Vermeer # get partial match (supports comma delimited)
-uv run get.py --no-matte # skip matted variants
+uv run get.py --keep # don't replace images already in art/
+uv run get.py --matte # also make matted variants of portrait works
 ```
 
 - Without `uv` run like: `pip3 install requests pillow numpy && python3 get.py`
+- Existing images in `art/` with the same name get replaced (including edited ones) unless `--keep` is used
 - `--list` and `--out` point at a different list or output folder
 - For fewer Wikipedia timeouts provide contact info like `FRAME_ART_UA="FrameArtPrep/1.0 (you@foo.com)" uv run get.py`
 
 ### Directories
 
-- `art/`: finished `3840×2160` images
-- `temp/`: downloads, lookup cache
-- `manual/`: custom added artwork
+- `art/`: finished `3840×2160` images, plus custom added artwork named the same way
+- `temp/`: downloads, lookup cache, `review.html`
 
 ### Art selection
 
