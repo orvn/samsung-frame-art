@@ -34,8 +34,8 @@ Image.MAX_IMAGE_PIXELS = None
 
 TARGET_W, TARGET_H = 3840, 2160
 TARGET_AR = TARGET_W / TARGET_H
-MAX_ORIGINAL_BYTES = 150 * 1024 * 1024   # bigger originals are fetched as a 7680px rendition
-BIG_THUMB_W = 7680
+MAX_ORIGINAL_BYTES = 450 * 1024 * 1024   # skip originals bigger than this (none on the list are)
+SCORE_TOP_N = 6                          # only the N best-resolution candidates get a colour check
 MATTE_IF_KEPT_BELOW = 0.62               # write a matted version if the crop keeps < 62% of the image
 MAX_OUTPUT_BYTES = 19 * 1024 * 1024      # stay under SmartThings' upload limit
 
@@ -59,8 +59,6 @@ WORKS = [
     ("feininger-steamer-odin-ii", "Steamer Odin, II", "Feininger", 1927,
      ["Dampfer Odin II Feininger"], "May not be on Commons; if missing, add it via ./manual"),
     ("redon-apparition", "Apparition", "Redon", 1905, [], ""),
-    ("harlequinade-1911", "Harlequinade", "", 1911, ["Harlequinade 1911 painting"],
-     "UNSURE which work you mean (artist 'Boch'?), so check this pick closely"),
     ("munch-vampire-ii", "Vampire II", "Munch", 1896, ["Vampyr II Munch"], "Print"),
     ("bocklin-villa-by-the-sea", "Villa by the Sea", "Böcklin", 1878,
      ["Villa am Meer Böcklin"], "Several versions exist; warmest/most detailed wins"),
@@ -82,13 +80,14 @@ WORKS = [
     ("degas-pagans-and-father", "Lorenzo Pagans and Auguste De Gas", "Degas", 1871,
      ["Degas father listening to Lorenzo Pagans playing the guitar"], ""),
     ("monet-tulip-fields-hague", "Tulip Fields near The Hague", "Monet", 1886,
-     ["Champs de tulipes Hollande Monet"], ""),
+     ["Champs de tulipes Hollande Monet", "Monet tulip fields 1886"], ""),
     ("monet-gare-saint-lazare", "The Gare Saint-Lazare", "Monet", 1877,
      ["La Gare Saint-Lazare Monet 1877"], "Several versions exist"),
     ("monet-bank-seine-bennecourt", "On the Bank of the Seine, Bennecourt", "Monet", 1868, [], ""),
     ("vangogh-boulevard-de-clichy", "Boulevard de Clichy", "Gogh", 1887, [], ""),
     ("vangogh-bank-of-the-seine", "Bank of the Seine", "Gogh", 1887, [], ""),
-    ("vangogh-evening-landscape", "Evening Landscape", "Gogh", 1885, [], ""),
+    ("vangogh-evening-landscape", "Evening Landscape", "Gogh", 1885,
+     ["Avondlandschap Van Gogh 1885", "Van Gogh evening landscape 1885"], ""),
     ("vangogh-undergrowth", "Undergrowth", "Gogh", 1887, [], ""),
     ("kandinsky-swinging", "Swinging", "Kandinsky", 1925, [], ""),
     ("kandinsky-ludwigskirche", "Munich-The Ludwigskirche", "Kandinsky", 1908,
@@ -102,8 +101,8 @@ WORKS = [
     ("turner-fishing-boats-hucksters", "Fishing Boats with Hucksters Bargaining for Fish", "Turner", 1837, [], ""),
     ("turner-dogana", "The Dogano, San Giorgio, Citella, from the Steps of the Europa", "Turner", 1842,
      ["Dogana San Giorgio Citella Europa Turner"], ""),
-    ("redon-deaths-head-1886", "death's head", "Redon", 1886,
-     ["Redon tête de mort 1886 lithograph"], "UNSURE of the exact title, so check this pick closely"),
+    ("redon-deaths-head-1886", "Through the Crack a Death's-Head Was Projected", "Redon", 1886,
+     ["Redon death's head 1886"], ""),
     ("munch-two-women-shore", "Two Women on the Shore", "Munch", 1898, ["To kvinner på stranden Munch"], "Woodcut"),
     ("munch-the-storm", "The Storm", "Munch", 1893, [], ""),
     ("bellows-dance-in-a-madhouse", "Dance in a Madhouse", "Bellows", 1917, [], "Lithograph"),
@@ -126,14 +125,41 @@ MANUAL_ONLY = [
     ("magritte-golconda", "Golconda (1953), Magritte"),
     ("varo-the-juggler", "The Juggler / The Magician (1956), Varo"),
     ("pollock-the-flame", "The Flame (c. 1934–38), Pollock"),
+    ("harlequinade-1911", "Harlequinade (1911), 'Boch': artist unclear, so add it yourself"),
 ]
 
 EXCLUDE_NAME = re.compile(
-    r"detail|ausschnitt|d[ée]tail|\bframe[sd]?\b|framed|cadre|rahmen|cropped|x-?ray|"
+    r"detail|ausschnitt|d[ée]tail|\bframe[sd]?\b|framed|cadre|rahmen|x-?ray|golden mean|overlay|"
     r"infrared|\bverso\b|reverse|r[üu]ckseite|signature|installation|exhibition|in situ|"
-    r"\bwall\b|visitor",
+    r"\bwall\b|visitor|gartenlaube|\(1[5-9]\d\d\) \d+\.|\bseite\b|\bpage \d|\bplate \d",
     re.I,
 )
+# Gallery snapshots (perspective, glare, wall colour) vs. proper museum reproductions.
+CAMERA_NAME = re.compile(
+    r"^File:\(|\bDSC[_ -]?\d|\bIMG[_ -]?\d|\bP\d{7}\b|, 0\d(?:,\d)?\.(?:jpe?g|JPG)$|"
+    r"hajotthu|WLA |bañistas|_\d{8}_\d{6}|photograph(?:ed)? (?:at|in)",
+    re.I,
+)
+CAMERA_UPPER_JPG = re.compile(r"\.JPG$")  # phone/camera default extension (case-sensitive)
+REPRO_NAME = re.compile(
+    r"google art project|\bMET D[PT]\d|\bNGA \d|\bWGA\d|metropolitan|rijksmuseum|SK-[AC]-\d|van gogh museum|"
+    r"art institute of chicago|national gallery|\bnga\b|tate|museo|mus[ée]e|munchmuseet|MM\.M\.|"
+    r"kunsthaus|belvedere|thyssen|barnes|philadelphia museum|courtauld|google cultural",
+    re.I,
+)
+GENERIC_WORDS = {
+    "google", "art", "project", "oil", "canvas", "panel", "paper", "board", "cardboard", "painting",
+    "museum", "museo", "musee", "gallery", "national", "collection", "institute", "chicago", "york",
+    "metropolitan", "met", "rijksmuseum", "tate", "britain", "paris", "orsay", "london", "version",
+    "par", "von", "van", "de", "des", "le", "la", "les", "der", "die", "das", "het", "and", "of",
+    "jpg", "jpeg", "png", "tif", "tiff", "file", "by", "edit", "restored", "high", "resolution",
+}
+# Per-work filename patterns for look-alikes the general rules can't tell apart.
+NOT_THIS = {
+    "vangogh-evening-landscape": r"moonrise|rising moon|two peasants",
+    "cezanne-chateau-noir": r"millstone|maison maria|sainte.?victoire",
+    "monet-gare-saint-lazare": r"ext[ée]rieur|pont de l'europe",
+}
 OK_MIME = {"image/jpeg", "image/png", "image/tiff", "image/webp"}
 
 SESSION = requests.Session()
@@ -146,6 +172,14 @@ _api_cache: dict[str, object] = {}
 # ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
+LOG_FILE = HERE / "frame_art.log"
+
+
+def log(msg: str) -> None:
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+
+
 def get_json(url: str, params: dict) -> dict:
     params = {**params, "format": "json"}
     key = url + "?" + json.dumps(params, sort_keys=True)
@@ -175,22 +209,29 @@ def download(url: str) -> Path:
     if dest.exists() and dest.stat().st_size > 0:
         return dest
     tmp = dest.with_suffix(ext + ".part")
-    for attempt in range(6):
+    last = ""
+    for attempt in range(8):
         try:
-            with SESSION.get(url, stream=True, timeout=180) as r:
+            with SESSION.get(url, stream=True, timeout=300) as r:
                 if r.status_code in (429, 503):
-                    time.sleep(5 * (attempt + 1))
+                    wait = r.headers.get("Retry-After", "")
+                    wait = int(wait) if wait.isdigit() else min(15 * 2 ** attempt, 600)
+                    last = f"HTTP {r.status_code}, waiting {wait}s"
+                    log(f"rate-limited on {url[-80:]}: {last}")
+                    time.sleep(wait)
                     continue
                 r.raise_for_status()
                 with open(tmp, "wb") as f:
                     for chunk in r.iter_content(1 << 20):
                         f.write(chunk)
             tmp.rename(dest)
-            time.sleep(1)  # be polite to upload.wikimedia.org
+            time.sleep(2)  # be polite to upload.wikimedia.org
             return dest
-        except requests.RequestException:
-            time.sleep(3 * (attempt + 1))
-    raise RuntimeError(f"download failed: {url}")
+        except requests.RequestException as e:
+            last = str(e)
+            time.sleep(10 * (attempt + 1))
+    log(f"download FAILED {url}: {last}")
+    raise RuntimeError(f"download failed ({last}): {url}")
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +243,17 @@ def norm(s: str) -> str:
 
 def words(s: str) -> set[str]:
     return {w for w in re.findall(r"[a-z]+", norm(s)) if len(w) > 2 and w not in {"the", "and", "with", "from"}}
+
+
+def title_match(fname: str, title: str, artist: str) -> tuple[bool, int]:
+    """(all title words present, number of unrelated extra words) for a Commons filename."""
+    want = words(title)
+    have = words(fname) - GENERIC_WORDS - words(artist) - {"paul", "vincent", "claude", "edgar",
+                                                           "johannes", "joseph", "mallord", "william",
+                                                           "edvard", "odilon", "georges", "pieter",
+                                                           "peter", "wassily", "umberto", "chaim"}
+    have = {w for w in have if not re.fullmatch(r"[a-z]?\d+[a-z]?", w)}
+    return want <= words(fname), len(have - want)
 
 
 def wd_entities(ids: list[str], props: str = "claims|labels") -> dict:
@@ -226,7 +278,8 @@ def labels(ent: dict) -> list[str]:
     return [v["value"] for v in ent.get("labels", {}).values()]
 
 
-def resolve_wikidata(title: str, artist: str, year: int, queries: list[str]) -> dict | None:
+def resolve_wikidata(title: str, artist: str, year: int, queries: list[str],
+                     alt_titles: list[str] = ()) -> dict | None:
     qids: list[str] = []
     for q in queries:
         j = get_json(WD_API, dict(action="query", list="search", srsearch=q, srlimit=15))
@@ -252,15 +305,19 @@ def resolve_wikidata(title: str, artist: str, year: int, queries: list[str]) -> 
             m = re.match(r"[+-](\d+)-", t.get("time", ""))
             if m:
                 years.append(int(m.group(1)))
-        ydiff = min((abs(y - year) for y in years), default=8)
-        sim = max((len(want & words(l)) / max(len(want), 1) for l in labels(e)), default=0)
+        ydiff = min((abs(y - year) for y in years), default=4)
+        if years and ydiff > 6:
+            continue  # e.g. Van Gogh's 1889 "Evening Landscape with Rising Moon" vs the 1885 one
+        # Jaccard, so "Evening Landscape" doesn't match "Evening Landscape with Rising Moon"
+        alts = [want] + [words(t) for t in alt_titles if words(t)]
+        sim = max((len(a & words(l)) / max(len(a | words(l)), 1) for l in labels(e) for a in alts), default=0)
+        if sim < 0.5:
+            continue
         score = sim * 6 - min(ydiff, 15) * 0.35 - rank * 0.3
         if score > best_score:
             best_score, best = score, dict(
                 qid=qid, label=(labels(e) or [qid])[0], images=claim_values(e, "P18"),
                 category=(claim_values(e, "P373") or [None])[0], sim=sim, ydiff=ydiff)
-    if best and artist == "" and best["sim"] < 0.5:
-        return None
     return best
 
 
@@ -310,16 +367,6 @@ def lab_stats(img: Image.Image) -> dict:
     B = 200 * (f[..., 1] - f[..., 2])
     chroma = np.hypot(A, B)
     return dict(b=float(B.mean()), white=float(np.mean((L > 88) & (chroma < 10))), L=float(L.mean()))
-
-
-def score_candidate(eff_w: int, eff_h: int, stats: dict, mime: str) -> tuple[float, float]:
-    _, ch = crop_box_size(eff_w, eff_h)
-    res = min(ch / TARGET_H, 1.6)
-    res_term = 3 * res if res < 1 else 3 + 1.2 * (res - 1)
-    s = res_term + 0.07 * stats["b"] - 4 * stats["white"]
-    if mime == "image/tiff":
-        s -= 0.15  # TIFFs are often 16-bit/odd colour spaces; prefer an equal JPEG
-    return s, res
 
 
 def to_srgb(im: Image.Image) -> Image.Image:
@@ -434,13 +481,15 @@ def gather_candidates(work: tuple, used: set[str]) -> tuple[list[dict], dict]:
     slug, title, artist, year, extra, note = work
     queries = [f"{title} {artist}".strip()] + extra
     meta: dict = {"wikidata": None, "confidence": "high"}
-    wd = resolve_wikidata(title, artist, year, queries)
+    wd = resolve_wikidata(title, artist, year, queries, extra_titles(work))
     titles: list[str] = []
+    verified: set[str] = set()
     if wd:
         meta["wikidata"] = wd
-        titles += ["File:" + f for f in wd["images"]]
+        titles += ["File:" + f.replace("_", " ") for f in wd["images"]]
         if wd.get("category"):
-            titles += commons_category_files(wd["category"])
+            titles += [t.replace("_", " ") for t in commons_category_files(wd["category"])]
+        verified = set(titles)
     else:
         meta["confidence"] = "low (no Wikidata match; Commons search only)"
     for q in queries:
@@ -461,9 +510,25 @@ def gather_candidates(work: tuple, used: set[str]) -> tuple[list[dict], dict]:
         w, h = ii.get("width", 0), ii.get("height", 0)
         if min(w, h) < 900:
             continue
-        if artist and not wd and norm(artist) not in norm(t):
+        if ii.get("size", 0) > MAX_ORIGINAL_BYTES:
             continue
+        if work[0] in NOT_THIS and re.search(NOT_THIS[work[0]], t, re.I):
+            continue
+        is_verified = t in verified
+        full_title, extra = title_match(t, title, artist)
+        if not is_verified:
+            yrs = [int(y) for y in re.findall(r"(?<![\d.])(1[4-9]\d\d)(?![\d.])", t)]
+            if yrs and year and min(abs(y - year) for y in yrs) > 5:
+                continue  # dated to some other version, e.g. "c. 1892" when we want 1905
+            if extra > 2:
+                continue
+            # A plain search hit must name the artist and every word of the title.
+            if (artist and norm(artist) not in norm(t)) or not (
+                    full_title or any(title_match(t, q, artist)[0] for q in extra_titles(work))):
+                continue
         cands.append(dict(title=t, w=w, h=h, bytes=ii.get("size", 0), mime=ii["mime"],
+                          verified=is_verified, extra=extra,
+                          camera=bool(CAMERA_NAME.search(t) or CAMERA_UPPER_JPG.search(t)), repro=bool(REPRO_NAME.search(t)),
                           url=ii["url"], thumb=ii.get("thumburl", ii["url"]),
                           page=ii.get("descriptionurl", ""),
                           primary=bool(wd) and t.replace("File:", "") in [f.replace("_", " ") for f in wd["images"]]))
@@ -481,8 +546,32 @@ def gather_candidates(work: tuple, used: set[str]) -> tuple[list[dict], dict]:
     return cands, meta
 
 
+def extra_titles(work: tuple) -> list[str]:
+    """Alternative titles from the extra queries, minus the artist's name."""
+    artist = work[2]
+    out = []
+    for q in work[4]:
+        ws = words(q) - GENERIC_WORDS - words(artist) - {"painting", "lithograph", "woodcut"}
+        if ws:
+            out.append(" ".join(sorted(ws)))
+    return out
+
+
+def prelim_score(c: dict) -> float:
+    _, ch = crop_box_size(c["w"], c["h"])
+    res = min(ch / TARGET_H, 1.6)
+    s = 6 * res if res < 1 else 6 + 1.5 * (res - 1)  # below 2160px tall, every pixel counts
+    s += 0.4 * c.get("verified", False) + 0.5 * c.get("repro", False) - 1.2 * c.get("camera", False)
+    s -= min(0.3 * c.get("extra", 0), 1.5)
+    return s
+
+
 def score_all(cands: list[dict]) -> list[dict]:
-    for c in cands:
+    cands = sorted(cands, key=prelim_score, reverse=True)
+    for c in cands[SCORE_TOP_N:]:
+        c.update(b=0.0, white=0.0, L=0.0, res=min(crop_box_size(c["w"], c["h"])[1] / TARGET_H, 1.6))
+        c["score"] = prelim_score(c) - 5  # unscored: only used if all of the top N fail
+    for c in cands[:SCORE_TOP_N]:
         try:
             th = Image.open(download(c["thumb"]))
             th.load()
@@ -490,20 +579,15 @@ def score_all(cands: list[dict]) -> list[dict]:
         except Exception as e:
             c["error"] = str(e)
             st = dict(b=0.0, white=0.5, L=50.0)
-        eff_w, eff_h = c["w"], c["h"]
-        if c["bytes"] > MAX_ORIGINAL_BYTES and c["w"] > BIG_THUMB_W:
-            eff_w, eff_h = BIG_THUMB_W, round(c["h"] * BIG_THUMB_W / c["w"])
-        c["eff"] = (eff_w, eff_h)
         c.update(st)
-        c["score"], c["res"] = score_candidate(eff_w, eff_h, st, c["mime"])
+        c["res"] = min(crop_box_size(c["w"], c["h"])[1] / TARGET_H, 1.6)
+        # Resolution and source quality first, then warmth; big pure-white areas cost points.
+        # warmth is capped so a badly yellowed low-res scan can't beat a sharper one
+        c["score"] = prelim_score(c) + 0.05 * min(st["b"], 30) - 3 * st["white"] - 0.15 * (c["mime"] == "image/tiff")
     return sorted(cands, key=lambda c: c["score"], reverse=True)
 
 
 def fetch_full(c: dict) -> Path:
-    if c["bytes"] > MAX_ORIGINAL_BYTES and c["w"] > BIG_THUMB_W:
-        big = commons_info([c["title"]], thumb_w=BIG_THUMB_W)
-        url = next(iter(big.values()), {}).get("thumburl", c["url"])
-        return download(url)
     return download(c["url"])
 
 
@@ -550,6 +634,7 @@ def process_work(work: tuple, out: Path, overrides: dict, used: set[str], matte:
             im = load_image(fetch_full(c))
         except Exception as e:
             c["error"] = f"load failed: {e}"
+            log(f"{slug}: skipping {c['title']}: {e}")
             continue
         rec.update(render(slug, im, out, ov.get("anchor"), matte))
         rec["source"] = c["title"]
@@ -608,7 +693,9 @@ def write_review(recs: list[dict], out: Path) -> Path:
                 f'<a class="cand{chosen}" href="{e(c.get("page", ""))}" target="_blank">'
                 f'<img src="{e(c["thumb"])}" loading="lazy"><span>{c["w"]}×{c["h"]}<br>'
                 f'score {c.get("score", 0):.2f} · b* {c.get("b", 0):.1f} · white {c.get("white", 0):.0%}'
-                f'</span></a>')
+                + (" · museum scan" if c.get("repro") else "") + (" · photo" if c.get("camera") else "")
+                + ("" if c.get("verified", True) else " · search hit")
+                + f'</span></a>')
         src = r.get("source", "")
         src_html = (f'<a href="{e(r["source_page"])}" target="_blank">{e(src)}</a>'
                     if r.get("source_page") else e(src))
@@ -675,6 +762,7 @@ def main() -> None:
             print(f"      ✓ {r['source']}  ({r.get('src')}, kept {r.get('kept', 0):.0%})")
         recs.append(r)
         API_CACHE_FILE.write_text(json.dumps(_api_cache))
+        write_review(recs, out)  # so a long or interrupted run can be checked as it goes
     if not only:
         recs += process_manual(out, not args.no_matte)
     review = write_review(recs, out)
