@@ -265,3 +265,6 @@ test-results/
 .wdio/
 .cy/
 .grunt
+
+# downloads, cache, log and review page from get.py
+/temp/

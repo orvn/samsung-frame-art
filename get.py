@@ -4,19 +4,10 @@
 # dependencies = ["requests", "pillow", "numpy"]
 # ///
 """
-Samsung Frame art prep: finds each painting listed in artlist.json on Wikimedia
-Commons, picks the most detailed, warmest reproduction, and writes 3840x2160 crops
-to art/ as "Artist (year) - Title.jpg". Downloads, the log and the review page go in temp/.
+Samsung Frame art prep: fetches the paintings in artlist.json from Wikimedia Commons
+and writes 3840x2160 crops to art/. See readme.md.
 
-Usage (macOS, with uv installed: `brew install uv`):
-    uv run get.py                                     # everything in artlist.json
-    uv run get.py --only Vermeer                       # any part of the filename
-    uv run get.py --only "Geographer,Golden Bough"
-    uv run get.py --list other-list.json
-    or: pip3 install requests pillow numpy && python3 get.py
-
-The list of paintings, and any per-painting fixes (a specific Commons file, a local
-file, the crop position), live in artlist.json. This file is only the logic.
+    uv run get.py [--only Vermeer] [--no-matte] [--list artlist.json] [--out art]
 """
 from __future__ import annotations
 
