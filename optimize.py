@@ -4,10 +4,10 @@
 # dependencies = ["requests", "pillow", "numpy"]
 # ///
 """
-Optimizes your own images for the Frame: takes everything in raw/, crops it to 16:9
-around its focal area, scales it to 3840x2160 and saves a JPEG to art/. See readme.md.
+Optimizes your own images for the Frame, reads from .raw/ crops and sizes 16:9
+and 3840x2160 around focal area, saves jpg to .art/
 
-    uv run optimize.py [--only Magritte] [--keep] [--matte] [--anchor 0.3]
+    uv run optimize.py [--only Magritte] [-r] [--matte] [--anchor 0.3]
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import sys
 import unicodedata
 from pathlib import Path
 
-# Same crop, colour handling and JPEG settings as get.py, so both scripts' output matches.
+# (Same crop, color handling, jpeg settings as get.py)
 from get import (HERE, IMAGE_EXT, MATTE_IF_KEPT_BELOW, display_name, find_existing,
                  load_image, make_crop, make_matted, save_jpeg)
 
@@ -35,8 +35,9 @@ def main() -> None:
     ap.add_argument("--raw", default=str(HERE / "raw"), help="folder of images to optimize (default: raw/)")
     ap.add_argument("--out", default=str(HERE / "art"), help="where results go (default: art/)")
     ap.add_argument("--only", default="", help="comma-separated, case-insensitive parts of filenames")
-    ap.add_argument("--keep", action="store_true", help="leave images already in art/ as they are")
-    ap.add_argument("--matte", action="store_true",
+    ap.add_argument("-r", "--replace", action="store_true",
+                    help="overwrite images already in art/ (default: skip them)")
+    ap.add_argument("--matte", action="store_true",  # off by default: edge-to-edge only
                     help="for portrait images, also write a version showing the whole picture on a mat")
     ap.add_argument("--anchor", type=float, default=None,
                     help="crop position instead of the focal area: 0 = left/top, 1 = right/bottom")
@@ -58,8 +59,8 @@ def main() -> None:
     for i, p in enumerate(files, 1):
         name = output_name(p.stem)
         print(f"[{i}/{len(files)}] {p.name}", flush=True)
-        if args.keep and find_existing(out, name):
-            print(f"      = already in {out.name}/, kept")
+        if not args.replace and find_existing(out, name):
+            print(f"      = already in {out.name}/, skipped (-r to replace)")
             continue
         try:
             im = load_image(p)
