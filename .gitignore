@@ -1,3 +1,7 @@
+# project specific
+/temp/
+/raw/
+
 # os
 .DS_Store
 .DS_Store?
@@ -265,6 +269,3 @@ test-results/
 .wdio/
 .cy/
 .grunt
-
-# downloads, cache, log and review page from get.py
-/temp/
