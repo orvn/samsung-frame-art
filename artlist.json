@@ -1,8 +1,8 @@
 {
   "_help": {
     "about": "Samsung Frame art list, read by get.py. Keys starting with _ are ignored, so _note etc. can hold your own comments.",
-    "works": "Paintings to fetch from Wikimedia Commons. Output: art/<Artist> (<year>) - <Title>.jpg",
-    "manual": "Works Commons doesn't host. Add them to art/ yourself, named like the others, e.g. art/René Magritte (1950) - The Empire of Light.jpg; the review page shows which are there.",
+    "works": "Paintings to fetch: Wikimedia Commons first, then the Met, Art Institute of Chicago, Cleveland Museum of Art and WikiArt when Commons has nothing big enough. Output: art/<Artist> (<year>) - <Title>.jpg",
+    "manual": "Works you add to art/ yourself, named like the others; the review page shows which are there.",
     "fields": {
       "artist": "full name, as it should appear in the filename",
       "year": "used in the filename and to tell versions of a work apart",
@@ -13,7 +13,8 @@
       "match": "optional: name a source must contain, if not the artist's last word (e.g. Rembrandt)",
       "file": "optional: use this exact Commons file (\"File:...\") instead of searching",
       "local": "optional: use a file on disk instead (path relative to this folder)",
-      "anchor": "optional crop position: 0 = left/top, 0.5 = centre, 1 = right/bottom (default: automatic)"
+      "anchor": "optional crop position: 0 = left/top, 0.5 = centre, 1 = right/bottom (default: automatic)",
+      "url": "optional: download this image URL (any site) instead of searching"
     }
   },
   "works": [
@@ -199,17 +200,47 @@
       "year": 1656,
       "title": "A Seaport with Figures",
       "queries": ["Alessandro Salucci port capriccio"]
-    }
+    },
+    {
+      "artist": "René Magritte",
+      "year": 1943,
+      "title": "Harvest",
+      "queries": ["The Harvest", "La Moisson"]
+    },
+    {
+      "artist": "René Magritte",
+      "year": 1950,
+      "title": "The Empire of Light",
+      "queries": ["L'Empire des lumières"]
+    },
+    {
+      "artist": "René Magritte",
+      "year": 1928,
+      "title": "The Lovers",
+      "queries": ["Les Amants"]
+    },
+    {
+      "artist": "René Magritte",
+      "year": 1929,
+      "title": "The False Mirror",
+      "queries": ["Le Faux Miroir"]
+    },
+    {
+      "artist": "René Magritte",
+      "year": 1953,
+      "title": "Golconda",
+      "queries": ["Golconde"]
+    },
+    {
+      "artist": "Remedios Varo",
+      "year": 1956,
+      "title": "The Juggler",
+      "queries": ["The Magician", "El Juglar"]
+    },
+    {"artist": "Jackson Pollock", "year": 1938, "title": "The Flame"}
   ],
   "manual": [
     {"artist": "Leonora Carrington", "year": 1953, "title": "And Then We Saw the Daughter of the Minotaur"},
-    {"artist": "René Magritte", "year": 1943, "title": "Harvest"},
-    {"artist": "René Magritte", "year": 1950, "title": "The Empire of Light"},
-    {"artist": "René Magritte", "year": 1928, "title": "The Lovers"},
-    {"artist": "René Magritte", "year": 1929, "title": "The False Mirror"},
-    {"artist": "René Magritte", "year": 1953, "title": "Golconda"},
-    {"artist": "Remedios Varo", "year": 1956, "title": "The Juggler"},
-    {"artist": "Jackson Pollock", "year": 1938, "title": "The Flame"},
     {"artist": "Boch", "year": 1911, "title": "Harlequinade", "_note": "artist unclear"}
   ]
 }

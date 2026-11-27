@@ -63,6 +63,7 @@ class Work:
     exclude: str = ""          # regex of look-alike filenames to reject
     file: str = ""             # force this Commons file
     local: str = ""            # or use this file on disk
+    url: str = ""              # or download this image URL (any site)
     anchor: float | None = None  # crop position 0..1; None = automatic
 
     @property
@@ -175,7 +176,8 @@ def log(msg: str) -> None:
 
 
 def get_json(url: str, params: dict) -> dict:
-    params = {**params, "format": "json"}
+    if "wikimedia.org" in url or "wikidata.org" in url:  # they need format=json; other APIs don't
+        params = {**params, "format": "json"}
     key = url + "?" + json.dumps(params, sort_keys=True)
     if key in _api_cache:
         return _api_cache[key]  # type: ignore[return-value]
@@ -406,6 +408,7 @@ def best_offset(im: Image.Image, cw: int, ch: int, anchor: float | None) -> tupl
         e[:, 1:] += np.abs(np.diff(small, axis=1))
         e[1:, :] += np.abs(np.diff(small, axis=0))
         prof = e.sum(axis=0 if horizontal else 1)
+        prof = np.maximum(prof - 0.8 * np.median(prof), 0)  # ignore even texture (canvas grain, sky)
         n = len(prof)
         win = max(1, round(n * (cw / W if horizontal else ch / H)))
         cs = np.concatenate([[0], np.cumsum(prof)])
@@ -413,10 +416,16 @@ def best_offset(im: Image.Image, cw: int, ch: int, anchor: float | None) -> tupl
         if len(sums) <= 1 or sums.max() <= 0:
             anchor = 0.5
         else:
-            pos = np.arange(len(sums))
-            prior = np.exp(-(((pos - (len(sums) - 1) / 2) / (len(sums) * 0.35)) ** 2))
-            mix = 0.55 * sums / sums.max() + 0.45 * prior
-            anchor = int(np.argmax(mix)) / (len(sums) - 1)
+            # Of the windows that hold (nearly) all the detail, take the one that centres it,
+            # so a subject isn't left pressed against the edge; slight preference for the middle.
+            cw_ = np.concatenate([[0], np.cumsum(prof * np.arange(n))])
+            centroid = (cw_[win:] - cw_[:-win]) / np.maximum(sums, 1e-9)
+            starts = np.arange(len(sums))
+            off_centre = np.abs(centroid - (starts + (win - 1) / 2)) / win
+            off_middle = np.abs(starts - (len(sums) - 1) / 2) / len(sums)
+            good = np.flatnonzero(sums >= 0.95 * sums.max())
+            k = good[np.argmin(off_centre[good] + 0.1 * off_middle[good])]
+            anchor = int(k) / (len(sums) - 1)
     off = round(anchor * slack)
     return (off, 0) if horizontal else (0, off)
 
@@ -537,6 +546,8 @@ def gather_candidates(work: Work, used: set[str]) -> tuple[list[dict], dict]:
         ars = [c["w"] / c["h"] for c in cands]
         ref_ar = max(ars, key=lambda a: sum(abs(math.log(a / b)) < 0.05 for b in ars))
     cands = [c for c in cands if abs(math.log((c["w"] / c["h"]) / ref_ar)) < 0.05 or c["primary"]]
+    if refs:
+        meta["ref_ar"] = ref_ar  # only trusted when it comes from the Wikidata image
     return cands, meta
 
 
@@ -567,8 +578,11 @@ def score_all(cands: list[dict]) -> list[dict]:
     for c in cands[:SCORE_TOP_N]:
         try:
             th = Image.open(download(c["thumb"]))
+            th.draft("RGB", (600, 600))
             th.load()
-            st = lab_stats(to_srgb(th))
+            th = to_srgb(th)
+            th.thumbnail((600, 600))
+            st = lab_stats(th)
         except Exception as e:
             c["error"] = str(e)
             st = dict(b=0.0, white=0.5, L=50.0)
@@ -582,6 +596,188 @@ def score_all(cands: list[dict]) -> list[dict]:
 
 def fetch_full(c: dict) -> Path:
     return download(c["url"])
+
+
+# ---------------------------------------------------------------------------
+# Other sources, tried when Commons has nothing or only copies too small for
+# 2160px: museum open-access APIs (public-domain images only), then WikiArt.
+# ---------------------------------------------------------------------------
+MET_API = "https://collectionapi.metmuseum.org/public/collection/v1"
+AIC_API = "https://api.artic.edu/api/v1"
+CMA_API = "https://openaccess-api.clevelandart.org/api/artworks/"
+WIKIART_API = "https://www.wikiart.org/en/api/2"
+PER_SOURCE = 3  # matches kept per source (some have to be downloaded to learn their size)
+
+
+def _stems(s: str) -> set[str]:
+    """Words with a plural 's' dropped, so 'The Empire of Lights' matches 'The Empire of Light'."""
+    return {w[:-1] if len(w) > 4 and w.endswith("s") and not w.endswith("ss") else w for w in words(s)}
+
+
+_GENERIC_STEMS = _stems(" ".join(GENERIC_WORDS))
+
+
+def identity_ok(work: Work, title: str, artist_text: str, year) -> tuple[bool, int]:
+    """Is this record the work? (artist surname, every title word, year within 6). Returns (ok, extra words)."""
+    if work.surname and norm(work.surname) not in norm(artist_text or ""):
+        return False, 0
+    try:
+        y = int(str(year)[:4])
+    except (TypeError, ValueError):
+        y = 0
+    if y and work.year and abs(y - work.year) > 6:
+        return False, 0
+    have = _stems(title)
+    for want in [_stems(work.title)] + [_stems(a) for a in extra_titles(work)]:
+        if want and want <= have:
+            return True, len(have - want - _stems(work.artist) - _GENERIC_STEMS)
+    return False, 0
+
+
+def _cand(source: str, ident: str, title: str, url: str, thumb: str, page: str,
+          w: int = 0, h: int = 0, ar: float = 0.0, extra: int = 0, museum: bool = True) -> dict:
+    return dict(title=f"{source}: {ident}", label=title, source=source, url=url, thumb=thumb or url,
+                page=page, w=int(w or 0), h=int(h or 0), ar=ar, bytes=0, mime="image/jpeg",
+                primary=False, verified=True, extra=extra, camera=False, repro=museum)
+
+
+def _queries(work: Work) -> list[str]:
+    return [work.title] + [q for q in work.queries if q][:2]
+
+
+def met_candidates(work: Work) -> list[dict]:
+    out, seen = [], set()
+    for q in _queries(work):
+        j = get_json(MET_API + "/search", dict(hasImages="true", q=q))
+        for oid in (j.get("objectIDs") or [])[:10]:
+            if oid in seen or len(out) >= PER_SOURCE:
+                continue
+            seen.add(oid)
+            o = get_json(f"{MET_API}/objects/{oid}", {})
+            if not o.get("isPublicDomain") or not o.get("primaryImage"):
+                continue
+            ok, extra = identity_ok(work, o.get("title", ""), o.get("artistDisplayName", ""), o.get("objectBeginDate"))
+            if ok:
+                out.append(_cand("Met", str(oid), o["title"], o["primaryImage"], o.get("primaryImageSmall", ""),
+                                 o.get("objectURL", ""), extra=extra))
+    return out
+
+
+def aic_candidates(work: Work) -> list[dict]:
+    out = []
+    for q in _queries(work):
+        j = get_json(AIC_API + "/artworks/search",
+                     dict(q=q, limit=10, fields="id,title,artist_title,date_start,image_id,is_public_domain"))
+        iiif = (j.get("config") or {}).get("iiif_url", "https://www.artic.edu/iiif/2")
+        for d in j.get("data") or []:
+            if len(out) >= PER_SOURCE or not d.get("image_id") or not d.get("is_public_domain"):
+                continue
+            if any(c["title"] == f"AIC: {d['id']}" for c in out):
+                continue
+            ok, extra = identity_ok(work, d.get("title", ""), d.get("artist_title", ""), d.get("date_start"))
+            if not ok:
+                continue
+            info = get_json(f"{iiif}/{d['image_id']}/info.json", {})
+            w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+            if not w or not h:
+                continue
+            cap = 3000  # AIC serves public-domain images up to about 3000px wide
+            for prof in info.get("profile") or []:
+                if isinstance(prof, dict) and prof.get("maxWidth"):
+                    cap = int(prof["maxWidth"])
+            fw = min(w, cap)
+            out.append(_cand("AIC", str(d["id"]), d["title"], f"{iiif}/{d['image_id']}/full/{fw},/0/default.jpg",
+                             f"{iiif}/{d['image_id']}/full/400,/0/default.jpg",
+                             f"https://www.artic.edu/artworks/{d['id']}", w=fw, h=round(h * fw / w), extra=extra))
+    return out
+
+
+def cma_candidates(work: Work) -> list[dict]:
+    out = []
+    for q in _queries(work):
+        j = get_json(CMA_API, dict(q=q, has_image=1, cc0=1, limit=10))
+        for d in j.get("data") or []:
+            if len(out) >= PER_SOURCE or d.get("share_license_status") != "CC0":
+                continue
+            if any(c["title"] == f"Cleveland: {d.get('id')}" for c in out):
+                continue
+            artist = " ".join(c.get("description", "") for c in d.get("creators") or [])
+            ok, extra = identity_ok(work, d.get("title", ""), artist, d.get("creation_date_earliest"))
+            if not ok:
+                continue
+            imgs = d.get("images") or {}
+            pick = imgs.get("print") or imgs.get("web") or {}
+            full = imgs.get("full") or {}
+            # the TIFF master can be 500 MB: only worth it when the print JPEG is too small
+            if (full.get("url") and int(full.get("filesize") or 0) <= MAX_ORIGINAL_BYTES
+                    and min(int(pick.get("width") or 0), int(pick.get("height") or 0)) < TARGET_H):
+                pick = full
+            if not pick.get("url"):
+                continue
+            c = _cand("Cleveland", str(d.get("id")), d["title"], pick["url"], (imgs.get("web") or {}).get("url", ""),
+                      d.get("url", ""), w=pick.get("width"), h=pick.get("height"), extra=extra)
+            c["mime"] = "image/tiff" if pick["url"].lower().endswith((".tif", ".tiff")) else "image/jpeg"
+            out.append(c)
+    return out
+
+
+def wikiart_candidates(work: Work) -> list[dict]:
+    out = []
+    for q in _queries(work):
+        j = get_json(WIKIART_API + "/PaintingSearch", dict(term=q))
+        for d in j.get("data") or []:
+            if len(out) >= PER_SOURCE or not d.get("image"):
+                continue
+            if any(c["title"] == f"WikiArt: {d.get('id')}" for c in out):
+                continue
+            ok, extra = identity_ok(work, d.get("title", ""), d.get("artistName", ""), d.get("completitionYear"))
+            if not ok:
+                continue
+            large = d["image"]
+            ar = (d.get("width") or 0) / (d.get("height") or 1)
+            page = f"https://www.wikiart.org/en/{d.get('artistUrl', '')}/{d.get('url') or ''}".rstrip("/")
+            # the API gives the 600px "!Large" copy; the original is the same URL without the suffix
+            out.append(_cand("WikiArt", str(d.get("id")), d["title"], re.sub(r"!Large\.jpg$", "", large), large,
+                             page, ar=ar, extra=extra, museum=False))
+    return out
+
+
+OTHER_SOURCES = [("Met", met_candidates), ("AIC", aic_candidates), ("Cleveland", cma_candidates),
+                 ("WikiArt", wikiart_candidates)]
+
+
+def measure(c: dict) -> bool:
+    """Download a candidate whose size the source doesn't report, and read its size."""
+    try:
+        path = download(c["url"])
+        with Image.open(path) as im:
+            c["w"], c["h"] = im.size
+        c["bytes"] = path.stat().st_size
+        return True
+    except Exception as e:
+        log(f"can't measure {c['title']}: {e}")
+        return False
+
+
+def other_candidates(work: Work, ref_ar: float | None, used: set[str]) -> list[dict]:
+    found = []
+    for name, fn in OTHER_SOURCES:
+        try:
+            found += [c for c in fn(work) if c["title"] not in used]
+        except Exception as e:  # one source being down shouldn't stop the others
+            log(f"{work.name}: {name} lookup failed: {e}")
+    keep = []
+    for c in found:
+        if ref_ar and c["ar"] and abs(math.log(c["ar"] / ref_ar)) > 0.05:
+            continue  # different proportions from the verified Commons image: another version
+        if (not c["w"] or not c["h"]) and not measure(c):
+            continue
+        if min(c["w"], c["h"]) < 900:
+            continue
+        if ref_ar and abs(math.log((c["w"] / c["h"]) / ref_ar)) > 0.05:
+            continue
+        keep.append(c)
+    return keep
 
 
 def render(name: str, im: Image.Image, out: Path, anchor: float | None, matte: bool) -> dict:
@@ -602,7 +798,14 @@ def process_work(work: Work, out: Path, used: set[str], matte: bool) -> dict:
         im = load_image((HERE / work.local).resolve())
         rec.update(render(name, im, out, work.anchor, matte), source=work.local, candidates=[])
         return rec
-    if work.file:
+    if work.url:
+        c = _cand("URL", work.url, work.title, work.url, "", work.url, museum=False)
+        cands = [c] if measure(c) else []
+        meta = {"confidence": "override"}
+        if not cands:
+            rec["flags"].append(f"couldn't download url in artlist.json: {work.url}")
+            return rec
+    elif work.file:
         info = commons_info([work.file])
         if not info:
             rec["flags"].append(f"file in artlist.json not found on Commons: {work.file}")
@@ -617,10 +820,16 @@ def process_work(work: Work, out: Path, used: set[str], matte: bool) -> dict:
     rec["confidence"] = meta.get("confidence")
     if meta.get("wikidata"):
         rec["wikidata"] = meta["wikidata"]["qid"] + " · " + meta["wikidata"]["label"]
+    if cands:
+        cands = score_all(cands)
+    if not (work.url or work.file) and (not cands or cands[0]["res"] < 1.0):
+        # Commons has nothing, or nothing big enough for 2160px: try museums and WikiArt too
+        more = other_candidates(work, meta.get("ref_ar"), used)
+        if more:
+            cands = score_all(cands + more)
     if not cands:
-        rec["flags"].append("NOT FOUND on Commons; set file or local in artlist.json")
+        rec["flags"].append("NOT FOUND on Commons, museum APIs or WikiArt; set url or local in artlist.json")
         return rec
-    cands = score_all(cands)
     rec["candidates"] = cands
     for c in cands:  # fall back down the list if a file won't decode
         try:
@@ -632,6 +841,8 @@ def process_work(work: Work, out: Path, used: set[str], matte: bool) -> dict:
         rec.update(render(name, im, out, work.anchor, matte))
         rec["source"] = c["title"]
         rec["source_page"] = c["page"]
+        if c.get("source"):
+            rec["flags"].append(f"from {c['source']}")
         used.add(c["title"])
         break
     else:
@@ -642,7 +853,8 @@ def process_work(work: Work, out: Path, used: set[str], matte: bool) -> dict:
     if rec["kept"] < MATTE_IF_KEPT_BELOW:
         rec["flags"].append(f"crop keeps only {rec['kept']:.0%} of the picture"
                             + ("; see the matted version" if matte else "; --matte makes a version showing all of it"))
-    if not meta.get("wikidata") and not work.file:
+    if not meta.get("wikidata") and not (work.file or work.url) and not rec.get("source", "").split(":")[0] in {
+            "Met", "AIC", "Cleveland", "WikiArt"}:
         rec["flags"].append("low-confidence match")
     if work.note.startswith("UNSURE"):
         rec["flags"].append("title uncertain")
@@ -683,6 +895,7 @@ def write_review(recs: list[dict], out: Path, manual_list: list[str]) -> Path:
                 f'score {c.get("score", 0):.2f} · b* {c.get("b", 0):.1f} · white {c.get("white", 0):.0%}'
                 + (" · museum scan" if c.get("repro") else "") + (" · photo" if c.get("camera") else "")
                 + ("" if c.get("verified", True) else " · search hit")
+                + (f" · {c['source']}" if c.get("source") else "")
                 + f'</span></a>')
         src = r.get("source", "")
         src_html = (f'<a href="{e(r["source_page"])}" target="_blank">{e(src)}</a>'
