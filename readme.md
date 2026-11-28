@@ -42,11 +42,22 @@ uv run optimize.py --anchor 0.3 # fixed crop position instead of focal area (0 =
 - `-r` and `--matte` work the same as in `get.py`; files in `raw/` are never changed
 - Hyphenated names like `Leonora-Carrington-(1953)---Title.jpg` are saved as `Leonora Carrington (1953) - Title.jpg`
 
+**Send to the TV:**
+```sh
+uv run upload.py --tv 192.168.1.50 # first run: accept the prompt on the TV, the address is remembered
+uv run upload.py # later runs only send new or changed images
+uv run upload.py --remove-others # clear My Photos items it didn't send, e.g. SmartThings uploads (asks first)
+uv run upload.py --prune # remove uploads whose file is no longer in art/
+uv run upload.py --dry-run # show the plan without connecting
+```
+
+- Uploads go to My Photos edge to edge (no mat), over Wi-Fi with no SmartThings 50-image limit; the TV must be on and on the same network
+
 ### Directories
 
 - `art/`: finished `3840×2160` images, plus custom added artwork named the same way
 - `raw/`: your own images for `optimize.py`
-- `temp/`: downloads, lookup cache, `get.log`, `report.json`, and `review.html` (each pick next to the alternatives it beat)
+- `temp/`: downloads, lookup cache, `get.log`, `report.json`, and `review.html` (each pick next to the alternatives it beat); also the TV address, pairing token and upload record for `upload.py`
 
 ### Art selection
 
