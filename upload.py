@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["samsungtvws @ git+https://github.com/NickWaterton/samsung-tv-ws-api.git"]
+# # Pinned: the fork renamed its package (samsungtvws -> samsungframetv) in Nov 2026.
+# dependencies = ["samsungframetv @ git+https://github.com/NickWaterton/samsung-tv-ws-api.git@bd8fd17aaa5e64eb361cb757b232a8925c22168f"]
 # ///
 """
 Uploads everything in art/ to the Frame's My Photos over Wi-Fi: no SmartThings app,
@@ -53,15 +54,21 @@ def sha1(path: Path) -> str:
 
 def connect(host: str):
     try:
-        from samsungtvws import SamsungTVWS
+        from samsungframetv import SamsungTVWS
     except ImportError:
-        sys.exit("Needs the samsungtvws library: run with `uv run upload.py`, or\n"
-                 "pip3 install git+https://github.com/NickWaterton/samsung-tv-ws-api.git")
+        try:  # older installs of the same library
+            from samsungtvws import SamsungTVWS
+        except ImportError:
+            sys.exit("Needs the samsungframetv library: run with `uv run upload.py`, or\n"
+                     "pip3 install git+https://github.com/NickWaterton/samsung-tv-ws-api.git")
     TEMP.mkdir(exist_ok=True)
     hint = "" if TOKEN.exists() else " (first time: accept the prompt on the TV with the remote)"
     print(f"Connecting to {host}{hint}…", flush=True)
     tv = SamsungTVWS(host=host, port=8002, token_file=str(TOKEN), timeout=60, name="FrameArt")
-    art = tv.art()
+    try:
+        art = tv.art(timeout=60)  # newer versions default to 5s, too short for multi-MB uploads
+    except TypeError:
+        art = tv.art()
     try:
         ok = art.supported()
     except Exception as e:
